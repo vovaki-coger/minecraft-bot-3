@@ -42,6 +42,7 @@ class BotInstance {
         proxy: this.config.proxy,
         autoLogin: this.config.autoLogin,
         autoRegister: this.config.autoRegister,
+        autoResponse: this.config.autoResponse,
       },
       status: this.status,
       stats: this.stats,
@@ -148,6 +149,8 @@ class BotManager {
       this._addChat(instance, "system", "Бот подключился к серверу");
 
       const defaultMove = new Movements(bot);
+      defaultMove.allowSprinting = true;
+      defaultMove.canDig = true;
       bot.pathfinder.setMovements(defaultMove);
     });
 
@@ -189,7 +192,7 @@ class BotManager {
       await instance.captchaHandler?.handleChatCaptcha(message);
 
       if (config.autoResponse && instance.aiEnabled) {
-        await this._aiRespond(instance, message);
+        await this._aiRespond(instance, username, message);
       }
     });
 
@@ -247,8 +250,8 @@ class BotManager {
     }
   }
 
-  async _aiRespond(instance, playerMessage) {
-    if (!instance.aiEnabled) return;
+  async _aiRespond(instance, username, playerMessage) {
+    if (!instance.aiEnabled || !instance.bot) return;
     try {
       const context = this._buildAIContext(instance);
       const response = await this.ollamaManager.chat({
@@ -258,16 +261,122 @@ class BotManager {
         apiProvider: instance.config.apiProvider,
         systemPrompt: instance.config.systemPrompt,
         messages: [
-          { role: "user", content: `${context}\n\nИгрок написал в чат: "${playerMessage}"\nОтветь кратко в чате Minecraft (до 100 символов).` },
+          {
+            role: "user",
+            content: `${context}\n\nИгрок ${username} написал в чат: "${playerMessage}"\n\nОтветь по-русски. Если нужно выполнить действие — верни JSON: {"action": "walk_to", "x": 100, "y": 64, "z": 200} или {"action": "chat", "message": "текст"} или {"action": "collect", "block": "oak_log"}. Если просто отвечаешь — пиши текст до 100 символов.`,
+          },
         ],
       });
-      if (response.content) {
-        const reply = response.content.trim().slice(0, 100);
+
+      if (!response.content) return;
+      const text = response.content.trim();
+
+      // Try to parse JSON command
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
+      if (jsonMatch) {
+        try {
+          const cmd = JSON.parse(jsonMatch[0]);
+          await this._executeBotCommand(instance, cmd);
+          return;
+        } catch {}
+      }
+
+      // Plain text reply — send to chat (max 100 chars)
+      const reply = text.replace(/\{[\s\S]*?\}/g, "").trim().slice(0, 100);
+      if (reply) {
         instance.bot.chat(reply);
         this._addChat(instance, "bot", reply);
+        this.emit("bot:chat", { botId: instance.id, username: instance.config.nick, message: reply, type: "bot" });
       }
     } catch (err) {
       log.error("AI respond error:", err.message);
+    }
+  }
+
+  async _executeBotCommand(instance, cmd) {
+    const { bot } = instance;
+    if (!bot || !bot.entity) return;
+
+    log.info(`Bot command: ${JSON.stringify(cmd)}`);
+    this._addChat(instance, "system", `[ИИ] Действие: ${cmd.action}`);
+
+    switch (cmd.action) {
+      case "chat": {
+        const msg = String(cmd.message || "").slice(0, 100);
+        if (msg) {
+          bot.chat(msg);
+          this._addChat(instance, "bot", msg);
+          this.emit("bot:chat", { botId: instance.id, username: instance.config.nick, message: msg, type: "bot" });
+        }
+        break;
+      }
+
+      case "walk_to":
+      case "move_to": {
+        const x = Math.round(Number(cmd.x) || 0);
+        const y = Math.round(Number(cmd.y) || bot.entity.position.y);
+        const z = Math.round(Number(cmd.z) || 0);
+        bot.pathfinder.goto(new goals.GoalBlock(x, y, z)).catch((err) => {
+          log.warn("Pathfinder error:", err.message);
+        });
+        break;
+      }
+
+      case "follow": {
+        const target = Object.values(bot.entities).find(
+          (e) => e.type === "player" && e.username === cmd.target
+        );
+        if (target) {
+          bot.pathfinder.goto(new goals.GoalFollow(target, 2)).catch(() => {});
+        }
+        break;
+      }
+
+      case "collect":
+      case "collect_block": {
+        const blockName = cmd.block || cmd.target;
+        if (!blockName) break;
+        const blockType = bot.registry.blocksByName[blockName];
+        if (!blockType) break;
+        const block = bot.findBlock({ matching: blockType.id, maxDistance: 32 });
+        if (block) {
+          await bot.pathfinder.goto(new goals.GoalBlock(block.position.x, block.position.y, block.position.z)).catch(() => {});
+          await bot.dig(block).catch(() => {});
+        }
+        break;
+      }
+
+      case "attack": {
+        const entityName = cmd.target;
+        const entity = Object.values(bot.entities).find(
+          (e) => (e.name === entityName || e.username === entityName) &&
+                  e.position.distanceTo(bot.entity.position) < 20
+        );
+        if (entity) {
+          await bot.pathfinder.goto(new goals.GoalFollow(entity, 2)).catch(() => {});
+          bot.attack(entity);
+        }
+        break;
+      }
+
+      case "stop":
+        if (bot.pathfinder) bot.pathfinder.stop();
+        bot.clearControlStates();
+        break;
+
+      case "jump":
+        bot.setControlState("jump", true);
+        setTimeout(() => bot.setControlState("jump", false), 500);
+        break;
+
+      default:
+        // fallback: send as chat if there's a message
+        if (cmd.message) {
+          const msg = String(cmd.message).slice(0, 100);
+          bot.chat(msg);
+          this._addChat(instance, "bot", msg);
+        }
+        break;
     }
   }
 
@@ -277,7 +386,7 @@ class BotManager {
       .slice(0, 10)
       .map((i) => `${i.name} x${i.count}`)
       .join(", ");
-    return `Статус бота: HP=${s.health}/20, Голод=${s.food}/20, Опыт=${s.experience}, Броня=${s.armor}\nКоординаты: X=${s.x} Y=${s.y} Z=${s.z}, Биом: ${s.biome}\nИнвентарь: [${invSummary}]`;
+    return `Статус: HP=${s.health}/20, Голод=${s.food}/20, Опыт=${s.experience}, Броня=${s.armor}\nКоординаты: X=${s.x} Y=${s.y} Z=${s.z}, Биом: ${s.biome}\nИнвентарь: [${invSummary || "пусто"}]`;
   }
 
   _getInventoryItems(bot) {

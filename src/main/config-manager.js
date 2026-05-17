@@ -90,11 +90,12 @@ class ConfigManager {
       apiKey: "",
       apiProvider: "openai",
       systemPrompt:
-        "Ты умный Minecraft-бот на базе Andy-4. Всегда отвечай ТОЛЬКО по-русски. Анализируй состояние мира и принимай решения. Ты можешь ходить, собирать ресурсы, строить и общаться в чате. Отвечай JSON-командами когда нужно действие.",
+        "Ты умный Minecraft-бот. Всегда отвечай ТОЛЬКО по-русски. Ты можешь ходить, собирать ресурсы, строить и общаться. Когда нужно выполнить действие — отвечай JSON: {\"action\": \"chat\", \"message\": \"текст\"} или {\"action\": \"walk_to\", \"x\": 0, \"y\": 0, \"z\": 0} или {\"action\": \"collect\", \"block\": \"oak_log\"}. На вопросы отвечай по-русски.",
       proxy: "",
       autoLogin: true,
       autoRegister: true,
       autoReconnect: true,
+      autoResponse: true,
       reconnectDelay: 5000,
     };
   }

@@ -14,6 +14,19 @@ export default function RightPanel({ bot }: Props) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [bot?.chatHistory]);
 
+  useEffect(() => {
+    if (bot) {
+      setAutoResponse(!!(bot.config as any).autoResponse);
+    }
+  }, [bot?.id]);
+
+  async function handleAutoResponseToggle(checked: boolean) {
+    setAutoResponse(checked);
+    if (bot) {
+      await window.electronAPI.bot.updateConfig(bot.id, { autoResponse: checked });
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || !bot) return;
     await window.electronAPI.bot.sendChat(bot.id, input.trim());
@@ -54,13 +67,13 @@ export default function RightPanel({ bot }: Props) {
         style={{ borderColor: "#3a3a3a" }}
       >
         <span className="text-xs font-mono" style={{ color: "#7ecc49" }}>
-          💬 {bot?.status === "online" ? "Игровой чат" : "Оффлайн чат"}
+          {bot?.status === "online" ? "Игровой чат" : "Оффлайн чат"}
         </span>
-        <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: "#888" }}>
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: autoResponse ? "#7ecc49" : "#888" }}>
           <input
             type="checkbox"
             checked={autoResponse}
-            onChange={(e) => setAutoResponse(e.target.checked)}
+            onChange={(e) => handleAutoResponseToggle(e.target.checked)}
             style={{ accentColor: "#7ecc49" }}
           />
           Автоответ
