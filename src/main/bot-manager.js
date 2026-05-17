@@ -8,6 +8,10 @@ const log = require("electron-log");
 const { SurvivorAI } = require("./survivor-ai");
 const { CaptchaHandler } = require("./captcha-handler");
 const { TaskManager, parseCommand } = require("./bot-tasks");
+const { parseAndy4Response, executeAndy4Command, isAndy4Model } = require("./andy4-parser");
+
+// Системный промт, который добавляется ПЕРЕД промтом модели — форсирует русский
+const RUSSIAN_OVERRIDE = `ВАЖНО: Ты общаешься НА РУССКОМ ЯЗЫКЕ. Все твои ответы должны быть на русском. Никакого английского в тексте. `;
 
 class BotInstance {
   constructor(config, emit) {
@@ -22,7 +26,7 @@ class BotInstance {
     this.captchaHandler = null;
     this.taskManager = null;
     this.reconnectTimer = null;
-    this._lastAIResponse = 0; // throttle AI responses
+    this._lastAIResponse = 0;
     this.stats = {
       health: 20, food: 20, armor: 0, experience: 0,
       x: 0, y: 0, z: 0, biome: "unknown",
@@ -132,7 +136,6 @@ class BotManager {
     const { bot } = instance;
     const botId = instance.id;
 
-    // === Загружаем pathfinder ===
     bot.loadPlugin(pathfinder);
 
     bot.once("spawn", () => {
@@ -140,7 +143,6 @@ class BotManager {
       instance.captchaHandler = new CaptchaHandler(instance, this.ollamaManager);
       instance.taskManager = new TaskManager(instance, this.emit);
 
-      // Настраиваем движение
       const movements = new Movements(bot);
       movements.allowSprinting = true;
       movements.canDig = true;
@@ -176,12 +178,9 @@ class BotManager {
       this._addChat(instance, "player", "[" + username + "]: " + message);
       this.emit("bot:chat", { botId, username, message, type: "player" });
 
-      // Авто-логин
       await this._handleAutoLogin(instance, message);
-      // Капча
       await instance.captchaHandler?.handleChatCaptcha(message);
 
-      // Обработка команды / ответ ИИ
       if (instance.config.autoResponse && instance.aiEnabled) {
         await this._handlePlayerMessage(instance, username, message);
       }
@@ -219,97 +218,168 @@ class BotManager {
   }
 
   // ===================================================================
-  // ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ ОТ ИГРОКОВ
+  // ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ
   // ===================================================================
   async _handlePlayerMessage(instance, username, message) {
     if (!instance.bot?.entity) return;
 
-    // 1. Сначала пробуем распознать команду скриптово (без AI)
-    const cmd = parseCommand(message, instance.config.nick);
-    if (cmd) {
-      log.info("Scripted task:", cmd.task, JSON.stringify(cmd));
-      if (cmd.task === "come_to" || cmd.task === "follow") {
-        cmd.player = username; // всегда идём к тому кто написал
+    // 1. Скриптовые команды (мгновенно, без AI)
+    const scriptCmd = parseCommand(message, instance.config.nick);
+    if (scriptCmd) {
+      log.info("[Script] Task:", scriptCmd.task, JSON.stringify(scriptCmd));
+      if (scriptCmd.task === "come_to" || scriptCmd.task === "follow") {
+        scriptCmd.player = username;
       }
-      instance.taskManager?.runTask(cmd.task, cmd).catch(e => log.error("Task run error:", e.message));
+      instance.taskManager?.runTask(scriptCmd.task, scriptCmd).catch(e =>
+        log.error("Task error:", e.message)
+      );
       return;
     }
 
-    // 2. Если команду не распознали — проверяем throttle (не чаще раза в 3 сек)
+    // 2. Throttle: не чаще раза в 4 сек
     const now = Date.now();
-    if (now - instance._lastAIResponse < 3000) return;
+    if (now - instance._lastAIResponse < 4000) return;
     instance._lastAIResponse = now;
 
-    // 3. Отвечаем через AI
+    // 3. AI ответ
     await this._aiRespond(instance, username, message);
   }
 
   async _aiRespond(instance, username, message) {
     if (!instance.aiEnabled || !instance.bot) return;
+
+    const useAndy4 = isAndy4Model(instance.config.aiModel);
+    const ctx = this._buildContext(instance);
+
+    // Системный промт — для Andy-4 добавляем инструкцию русского языка
+    let sysPrompt = instance.config.systemPrompt || "";
+    if (useAndy4) {
+      // Andy-4 уже знает Minecraft команды, просто добавляем русский
+      sysPrompt = RUSSIAN_OVERRIDE +
+        "Ты Minecraft-бот. Отвечай на русском. Для действий используй команды: " +
+        "!goToPlayer(\"имя\", 3) !followPlayer(\"имя\", 3) !stop() " +
+        "!collectBlock(\"блок\", кол-во) !attackNearest(\"моб\") !craftItem(\"предмет\", 1)\n" +
+        ctx;
+    } else {
+      sysPrompt = (sysPrompt || "") +
+        "\n\nТекущее состояние: " + ctx +
+        "\nОтвечай ТОЛЬКО по-русски. Для физических действий используй JSON: " +
+        "{\"action\":\"walk_to\",\"x\":0,\"y\":64,\"z\":0} или {\"action\":\"follow\",\"target\":\"" + username + "\"}";
+    }
+
     try {
-      const ctx = this._buildContext(instance);
       const response = await this.ollamaManager.chat({
         model: instance.config.aiModel || "llama3",
         mode: instance.config.aiMode || "local",
         apiKey: instance.config.apiKey,
         apiProvider: instance.config.apiProvider,
-        systemPrompt: instance.config.systemPrompt,
+        systemPrompt: sysPrompt,
         messages: [{
           role: "user",
-          content:
-            ctx + "\n\nИгрок " + username + " написал: \"" + message + "\"\n\n" +
-            "Ответь по-русски. Если нужно выполнить физическое действие — верни JSON:\n" +
-            "{\"action\":\"walk_to\",\"x\":0,\"y\":64,\"z\":0} или\n" +
-            "{\"action\":\"follow\",\"target\":\"" + username + "\"} или\n" +
-            "{\"action\":\"chat\",\"message\":\"текст\"}\n" +
-            "Если просто разговор — напиши текст (до 100 символов).",
+          content: username + ": " + message,
         }],
       });
 
       if (!response?.content) return;
-      const text = response.content.trim();
+      const rawText = response.content.trim();
+      log.info("[AI raw]", rawText.slice(0, 200));
 
-      // Парсим JSON если AI решил выполнить действие
-      const jsonMatch = text.match(/\{[\s\S]*?\}/);
-      if (jsonMatch) {
-        try {
-          const cmd = JSON.parse(jsonMatch[0]);
-          if (cmd.action === "walk_to" && cmd.x !== undefined) {
-            await instance.taskManager?.runTask("walk_to", { x: cmd.x, y: cmd.y, z: cmd.z });
-          } else if (cmd.action === "follow") {
-            await instance.taskManager?.runTask("follow", { player: cmd.target || username });
-          } else if (cmd.action === "chat" && cmd.message) {
-            const msg = String(cmd.message).slice(0, 100);
-            instance.bot.chat(msg);
-            this._addChat(instance, "bot", msg);
-            this.emit("bot:chat", { botId: instance.id, username: instance.config.nick, message: msg, type: "bot" });
-          }
-          return;
-        } catch {}
-      }
-
-      // Обычный текстовый ответ
-      const reply = text.replace(/\{[\s\S]*?\}/g, "").trim().slice(0, 100);
-      if (reply) {
-        instance.bot.chat(reply);
-        this._addChat(instance, "bot", reply);
-        this.emit("bot:chat", { botId: instance.id, username: instance.config.nick, message: reply, type: "bot" });
+      if (useAndy4) {
+        await this._handleAndy4Response(instance, rawText, username);
+      } else {
+        await this._handleJsonResponse(instance, rawText, username);
       }
     } catch (err) {
       log.error("AI respond error:", err.message);
     }
   }
 
+  // Обработка ответа Andy-4 (с !commands)
+  async _handleAndy4Response(instance, rawText, username) {
+    const { chatText, commands } = parseAndy4Response(rawText);
+
+    // Сначала выполняем команды (движение, действия)
+    for (const cmd of commands) {
+      const executed = await executeAndy4Command(cmd, instance, instance.taskManager);
+      if (executed) log.info("[Andy4 exec]", cmd.name, cmd.args);
+    }
+
+    // Потом говорим в чат (если есть текст)
+    if (chatText && chatText.length > 0) {
+      // Переводим типичные английские фразы если AI не перевёл
+      let text = chatText;
+      const enRu = {
+        "Sure": "Хорошо",
+        "Alright": "Ладно",
+        "Okay": "Окей",
+        "I'm on my way": "Иду",
+        "I'll stop": "Останавливаюсь",
+        "I'll follow you": "Слежу за тобой",
+        "Got it": "Понял",
+        "Done": "Готово",
+        "No problem": "Не проблема",
+      };
+      for (const [en, ru] of Object.entries(enRu)) {
+        text = text.replace(new RegExp(en, "gi"), ru);
+      }
+
+      const finalText = text.slice(0, 100);
+      instance.bot.chat(finalText);
+      this._addChat(instance, "bot", finalText);
+      this.emit("bot:chat", {
+        botId: instance.id,
+        username: instance.config.nick,
+        message: finalText,
+        type: "bot",
+      });
+    }
+  }
+
+  // Обработка ответа с JSON командами (для llama3, mistral и др.)
+  async _handleJsonResponse(instance, rawText, username) {
+    const jsonMatch = rawText.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      try {
+        const cmd = JSON.parse(jsonMatch[0]);
+        if (cmd.action === "walk_to" && cmd.x !== undefined) {
+          instance.taskManager?.runTask("walk_to", { x: cmd.x, y: cmd.y, z: cmd.z });
+        } else if (cmd.action === "follow") {
+          instance.taskManager?.runTask("follow", { player: cmd.target || username });
+        } else if (cmd.action === "chat" && cmd.message) {
+          this._sendBotChat(instance, String(cmd.message).slice(0, 100));
+        } else if (cmd.action === "attack") {
+          instance.taskManager?.runTask("attack", { target: cmd.target });
+        }
+        return;
+      } catch {}
+    }
+
+    const reply = rawText.replace(/\{[\s\S]*?\}/g, "").trim().slice(0, 100);
+    if (reply) this._sendBotChat(instance, reply);
+  }
+
+  _sendBotChat(instance, text) {
+    if (!instance.bot || !text) return;
+    instance.bot.chat(text);
+    this._addChat(instance, "bot", text);
+    this.emit("bot:chat", {
+      botId: instance.id,
+      username: instance.config.nick,
+      message: text,
+      type: "bot",
+    });
+  }
+
   async _handleAutoLogin(instance, message) {
     const pass = this.configManager.getGlobalPassword();
     if (!pass) return;
     const m = message.toLowerCase();
-    if (instance.config.autoRegister && (m.includes("/register") || m.includes("зарегистрируй") || m.includes("registration"))) {
+    if (instance.config.autoRegister && (m.includes("/register") || m.includes("registration"))) {
       setTimeout(() => {
         instance.bot?.chat("/register " + pass + " " + pass);
         this._addChat(instance, "system", "Авто-регистрация выполнена");
       }, 1500);
-    } else if (instance.config.autoLogin && (m.includes("/login") || m.includes("войди") || m.includes("авториз"))) {
+    } else if (instance.config.autoLogin && (m.includes("/login") || m.includes("please log in"))) {
       setTimeout(() => {
         instance.bot?.chat("/login " + pass);
         this._addChat(instance, "system", "Авто-логин выполнен");
@@ -320,10 +390,8 @@ class BotManager {
   _buildContext(instance) {
     const s = instance.stats;
     const inv = instance.bot?.inventory.items().slice(0, 8)
-      .map(i => (i.name + "x" + i.count)).join(", ") || "пусто";
-    return "HP=" + s.health + "/20 Еда=" + s.food + "/20 XP=" + s.experience +
-      " Позиция: X=" + s.x + " Y=" + s.y + " Z=" + s.z +
-      " Инвентарь: [" + inv + "]";
+      .map(i => i.name + "x" + i.count).join(", ") || "пусто";
+    return "HP=" + s.health + "/20 Еда=" + s.food + "/20 Позиция:X=" + s.x + " Y=" + s.y + " Z=" + s.z + " Инв:[" + inv + "]";
   }
 
   _addChat(instance, type, text) {
@@ -382,7 +450,7 @@ class BotManager {
         mode: instance.config.aiMode || "local",
         apiKey: instance.config.apiKey,
         apiProvider: instance.config.apiProvider,
-        systemPrompt: instance.config.systemPrompt,
+        systemPrompt: RUSSIAN_OVERRIDE + (instance.config.systemPrompt || ""),
         messages: [{ role: "user", content: message }],
       });
       if (response?.content) {
