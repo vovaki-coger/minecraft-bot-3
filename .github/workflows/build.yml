@@ -1,0 +1,145 @@
+name: Build Minecraft Bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build renderer
+        run: npx vite build --config vite.renderer.config.ts
+
+      - name: Build Windows EXE
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0
+          name: "Призмарин Бот v2.0.0"
+          body: |
+            ## Что нового в v2.0.0
+            - Добавлены модели **Andy-4** и **sweaterdog/andy-4:micro-q8_0** (лучшие для Minecraft)
+            - Выбор модели через **дропдаун со стрелкой** — видно все установленные ИИ
+            - Авто-детект всех локальных моделей Ollama
+            - Фильтр моделей: Все / Minecraft ИИ / Установленные
+            - Прогресс загрузки: **X.XX / Y.YY ГБ** с процентной полоской
+            - Тёмный экран при скачивании модели с полоской загрузки
+            - Бот пишет **по-русски** по умолчанию
+            - Дефолтная модель: `sweaterdog/andy-4:micro-q8_0`
+            - Улучшен экран загрузки с анимацией
+          files: dist-electron/*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: prizmarinbot-v2-windows
+          path: dist-electron/*.exe
+          retention-days: 30
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libnss3-dev \
+            libgdk-pixbuf2.0-dev
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build renderer
+        run: npx vite build --config vite.renderer.config.ts
+
+      - name: Build Linux AppImage
+        run: npx electron-builder --linux --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0
+          name: "Призмарин Бот v2.0.0"
+          files: dist-electron/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: prizmarinbot-v2-linux
+          path: dist-electron/*.AppImage
+          retention-days: 30
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build renderer
+        run: npx vite build --config vite.renderer.config.ts
+
+      - name: Build macOS DMG
+        run: npx electron-builder --mac --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0
+          name: "Призмарин Бот v2.0.0"
+          files: dist-electron/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: prizmarinbot-v2-macos
+          path: dist-electron/*.dmg
+          retention-days: 30

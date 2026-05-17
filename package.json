@@ -1,0 +1,109 @@
+{
+  "name": "@workspace/minecraft-bot",
+  "version": "1.0.0",
+  "description": "Minecraft AI Bot - Electron Desktop Application",
+  "main": "src/main/index.js",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm run dev:renderer\" \"wait-on http://localhost:3456 && pnpm run dev:electron\"",
+    "dev:renderer": "vite --port 3456 --config vite.renderer.config.ts",
+    "dev:electron": "cross-env NODE_ENV=development electron src/main/index.js",
+    "build": "pnpm run build:renderer && pnpm run build:electron",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "build:electron": "electron-builder",
+    "typecheck": "tsc --noEmit",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac"
+  },
+  "dependencies": {
+    "mineflayer": "^4.23.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-collectblock": "^1.4.2",
+    "mineflayer-pvp": "^1.3.2",
+    "mineflayer-armor-manager": "^2.0.1",
+    "minecraft-data": "^3.79.0",
+    "prismarine-viewer": "^1.28.0",
+    "electron-store": "^8.1.0",
+    "ws": "^8.18.0",
+    "node-fetch": "^3.3.2",
+    "socks-proxy-agent": "^8.0.4",
+    "https-proxy-agent": "^7.0.6",
+    "http-proxy-agent": "^7.0.2",
+    "tesseract.js": "^5.1.1",
+    "electron-log": "^5.2.4",
+    "electron-updater": "^6.3.9",
+    "crypto-js": "^4.2.0",
+    "axios": "^1.7.9",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "@types/node": "^22.10.5",
+    "@types/crypto-js": "^4.2.2",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "~5.9.3",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "zustand": "^5.0.3",
+    "tailwindcss": "^3.4.17",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.4.49",
+    "lucide-react": "^0.469.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.6.0"
+  },
+  "build": {
+    "appId": "com.minecraftbot.app",
+    "productName": "Minecraft Bot",
+    "copyright": "Copyright © 2025",
+    "asar": true,
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main/**/*",
+      "src/preload/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/",
+        "to": "assets/",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "icon": "assets/icon.png",
+      "category": "Game"
+    },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.games"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
