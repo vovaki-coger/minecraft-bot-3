@@ -4,6 +4,7 @@ import BotControls from "../BotControls";
 import ModelsTab from "../tabs/ModelsTab";
 import SettingsTab from "../tabs/SettingsTab";
 import CoordinatorTab from "../tabs/CoordinatorTab";
+import AnarchyTab from "../tabs/AnarchyTab";
 
 export default function LeftPanel() {
   const { activeTab, bots, selectedBotId } = useAppStore();
@@ -11,9 +12,10 @@ export default function LeftPanel() {
 
   const content = () => {
     switch (activeTab) {
-      case "models": return <ModelsTab />;
-      case "settings": return <SettingsTab />;
+      case "models":      return <ModelsTab />;
+      case "settings":    return <SettingsTab />;
       case "coordinator": return <CoordinatorTab />;
+      case "anarchy":     return <AnarchyTab />;
       default:
         return (
           <div className="flex flex-col h-full overflow-hidden">
