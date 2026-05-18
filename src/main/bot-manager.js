@@ -1,3 +1,11 @@
+/**
+ * BotManager v3 — с интеграцией AIBrain (ReAct-петля).
+ *
+ * Главное изменение: вместо простого вызова ollamaManager.chat()
+ * теперь используется AIBrain — полноценный мозг бота с памятью,
+ * наблюдением за миром и мультишаговым рассуждением.
+ */
+
 const mineflayer = require("mineflayer");
 const { pathfinder, Movements, goals } = require("mineflayer-pathfinder");
 const { SocksProxyAgent } = require("socks-proxy-agent");
@@ -10,9 +18,9 @@ const { CaptchaHandler } = require("./captcha-handler");
 const { TaskManager, parseCommand } = require("./bot-tasks");
 const { parseAndy4Response, executeAndy4Command, isAndy4Model, stripThinkBlocks } = require("./andy4-parser");
 const { AgentLoop } = require("./agent-loop");
+const { AIBrain } = require("./ai-brain");
 
-// Системный промт, который добавляется ПЕРЕД промтом модели — форсирует русский
-const RUSSIAN_OVERRIDE = `ВАЖНО: Ты общаешься НА РУССКОМ ЯЗЫКЕ. Все твои ответы должны быть на русском. Никакого английского в тексте. `;
+const RUSSIAN_OVERRIDE = `ВАЖНО: Ты общаешься НА РУССКОМ ЯЗЫКЕ. Все твои ответы должны быть на русском. `;
 
 class BotInstance {
   constructor(config, emit) {
@@ -27,6 +35,7 @@ class BotInstance {
     this.captchaHandler = null;
     this.taskManager = null;
     this.agentLoop = null;
+    this.aiBrain = null;
     this.reconnectTimer = null;
     this._lastAIResponse = 0;
     this.stats = {
@@ -78,7 +87,6 @@ class BotManager {
     const fullConfig = { ...this.configManager.createDefaultBotConfig(), ...config };
     fullConfig.id = fullConfig.id || uuidv4();
     fullConfig.port = parseInt(fullConfig.port) || 25565;
-
     const instance = new BotInstance(fullConfig, this.emit);
     this.bots.set(instance.id, instance);
     this.configManager.saveBotConfig(fullConfig);
@@ -146,6 +154,19 @@ class BotManager {
       instance.taskManager = new TaskManager(instance, this.emit);
       instance.agentLoop = new AgentLoop(instance, this.emit);
 
+      // === ИНИЦИАЛИЗАЦИЯ AI BRAIN (v3) ===
+      if (instance.aiEnabled) {
+        instance.aiBrain = new AIBrain(
+          instance,
+          this.ollamaManager,
+          instance.taskManager,
+          this.emit
+        );
+        // Запускаем автономный режим: бот сам думает каждые 10 секунд
+        instance.aiBrain.startAutonomous(10000);
+        log.info("[BotManager] AIBrain started for bot", botId);
+      }
+
       const movements = new Movements(bot);
       movements.allowSprinting = true;
       movements.canDig = true;
@@ -153,7 +174,7 @@ class BotManager {
       bot.pathfinder.setMovements(movements);
 
       this.emit("bot:statusChanged", { botId, status: "online" });
-      this._addChat(instance, "system", "Бот подключился к серверу");
+      this._addChat(instance, "system", "Бот подключился к серверу. ИИ-мозг активирован.");
     });
 
     bot.on("health", () => {
@@ -205,6 +226,7 @@ class BotManager {
       instance.status = "offline";
       instance.agentLoop?.stop();
       instance.agentLoop = null;
+      instance.aiBrain?.stopAutonomous();
       this._addChat(instance, "system", "Кик: " + reason);
       this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
@@ -214,6 +236,7 @@ class BotManager {
       instance.status = "offline";
       instance.agentLoop?.stop();
       instance.agentLoop = null;
+      instance.aiBrain?.stopAutonomous();
       this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
     });
@@ -224,54 +247,54 @@ class BotManager {
     });
   }
 
-  // ===================================================================
-  // ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ
-  // ===================================================================
+  // ══════════════════════════════════════════════════════════════════════
+  // ОБРАБОТКА СООБЩЕНИЙ — через AIBrain (v3)
+  // ══════════════════════════════════════════════════════════════════════
+
   async _handlePlayerMessage(instance, username, message) {
     if (!instance.bot?.entity) return;
 
-    // 1. Скриптовые команды (мгновенно, без AI)
+    // 1. Сначала проверяем скриптовые команды (быстрые, без AI)
     const scriptCmd = parseCommand(message, instance.config.nick);
     if (scriptCmd) {
-      log.info("[Script] Task:", scriptCmd.task, JSON.stringify(scriptCmd));
-      if (scriptCmd.task === "come_to" || scriptCmd.task === "follow") {
-        scriptCmd.player = username;
-      }
-      instance.taskManager?.runTask(scriptCmd.task, scriptCmd).catch(e =>
+      log.info("[Script] Task:", scriptCmd.task);
+      if (scriptCmd.task === "come_to" || scriptCmd.task === "follow") scriptCmd.player = username;
+      instance.taskManager?.runTask(scriptCmd.task, scriptCmd).catch((e) =>
         log.error("Task error:", e.message)
       );
       return;
     }
 
-    // 2. Throttle: не чаще раза в 4 сек
+    // 2. Throttle: не чаще раза в 3 сек
     const now = Date.now();
-    if (now - instance._lastAIResponse < 4000) return;
+    if (now - instance._lastAIResponse < 3000) return;
     instance._lastAIResponse = now;
 
-    // 3. AI ответ
-    await this._aiRespond(instance, username, message);
+    // 3. Если AIBrain активен — используем его (ReAct-петля)
+    if (instance.aiBrain && instance.aiEnabled) {
+      log.info("[BotManager] Routing to AIBrain:", username, message);
+      await instance.aiBrain.respondToPlayer(username, message);
+      return;
+    }
+
+    // 4. Fallback — старый метод через andy4 / json
+    await this._legacyAIRespond(instance, username, message);
   }
 
-  async _aiRespond(instance, username, message) {
+  // Старый метод — оставляем как запасной
+  async _legacyAIRespond(instance, username, message) {
     if (!instance.aiEnabled || !instance.bot) return;
 
     const useAndy4 = isAndy4Model(instance.config.aiModel);
-    const ctx = this._buildContext(instance);
-
-    // Системный промт — для Andy-4 добавляем инструкцию русского языка
+    const ctx = this._buildLegacyContext(instance);
     let sysPrompt = instance.config.systemPrompt || "";
+
     if (useAndy4) {
-      // Andy-4 уже знает Minecraft команды, просто добавляем русский
       sysPrompt = RUSSIAN_OVERRIDE +
-        "Ты Minecraft-бот. Отвечай на русском. Для действий используй команды: " +
-        "!goToPlayer(\"имя\", 3) !followPlayer(\"имя\", 3) !stop() " +
-        "!collectBlock(\"блок\", кол-во) !attackNearest(\"моб\") !craftItem(\"предмет\", 1)\n" +
-        ctx;
+        "Ты Minecraft-бот. Отвечай на русском.\n" + ctx;
     } else {
-      sysPrompt = (sysPrompt || "") +
-        "\n\nТекущее состояние: " + ctx +
-        "\nОтвечай ТОЛЬКО по-русски. Для физических действий используй JSON: " +
-        "{\"action\":\"walk_to\",\"x\":0,\"y\":64,\"z\":0} или {\"action\":\"follow\",\"target\":\"" + username + "\"}";
+      sysPrompt = (sysPrompt || "") + "\n\nСостояние: " + ctx +
+        "\nОтвечай по-русски. Для действий: {\"action\":\"chat\",\"message\":\"текст\"}";
     }
 
     try {
@@ -281,16 +304,11 @@ class BotManager {
         apiKey: instance.config.apiKey,
         apiProvider: instance.config.apiProvider,
         systemPrompt: sysPrompt,
-        messages: [{
-          role: "user",
-          content: username + ": " + message,
-        }],
+        messages: [{ role: "user", content: username + ": " + message }],
       });
 
       if (!response?.content) return;
-      // Срезаем <think>...</think> блоки у ЛЮБОЙ модели (deepseek-r1, qwen и др.)
       const rawText = stripThinkBlocks(response.content.trim());
-      log.info("[AI raw (stripped)]", rawText.slice(0, 200));
 
       if (useAndy4) {
         await this._handleAndy4Response(instance, rawText, username);
@@ -298,52 +316,24 @@ class BotManager {
         await this._handleJsonResponse(instance, rawText, username);
       }
     } catch (err) {
-      log.error("AI respond error:", err.message);
+      log.error("Legacy AI respond error:", err.message);
     }
   }
 
-  // Обработка ответа Andy-4 (с !commands)
   async _handleAndy4Response(instance, rawText, username) {
     const { chatText, commands } = parseAndy4Response(rawText);
-
-    // Сначала выполняем команды (движение, действия)
     for (const cmd of commands) {
       const executed = await executeAndy4Command(cmd, instance, instance.taskManager);
       if (executed) log.info("[Andy4 exec]", cmd.name, cmd.args);
     }
-
-    // Потом говорим в чат (если есть текст)
     if (chatText && chatText.length > 0) {
-      // Переводим типичные английские фразы если AI не перевёл
+      const enRu = { "Sure": "Хорошо", "Alright": "Ладно", "Got it": "Понял", "Done": "Готово" };
       let text = chatText;
-      const enRu = {
-        "Sure": "Хорошо",
-        "Alright": "Ладно",
-        "Okay": "Окей",
-        "I'm on my way": "Иду",
-        "I'll stop": "Останавливаюсь",
-        "I'll follow you": "Слежу за тобой",
-        "Got it": "Понял",
-        "Done": "Готово",
-        "No problem": "Не проблема",
-      };
-      for (const [en, ru] of Object.entries(enRu)) {
-        text = text.replace(new RegExp(en, "gi"), ru);
-      }
-
-      const finalText = text.slice(0, 100);
-      instance.bot.chat(finalText);
-      this._addChat(instance, "bot", finalText);
-      this.emit("bot:chat", {
-        botId: instance.id,
-        username: instance.config.nick,
-        message: finalText,
-        type: "bot",
-      });
+      for (const [en, ru] of Object.entries(enRu)) text = text.replace(new RegExp(en, "gi"), ru);
+      this._sendBotChat(instance, text.slice(0, 100));
     }
   }
 
-  // Обработка ответа с JSON командами (для llama3, mistral и др.)
   async _handleJsonResponse(instance, rawText, username) {
     const jsonMatch = rawText.match(/\{[\s\S]*?\}/);
     if (jsonMatch) {
@@ -361,7 +351,6 @@ class BotManager {
         return;
       } catch {}
     }
-
     const reply = rawText.replace(/\{[\s\S]*?\}/g, "").trim().slice(0, 100);
     if (reply) this._sendBotChat(instance, reply);
   }
@@ -371,10 +360,7 @@ class BotManager {
     instance.bot.chat(text);
     this._addChat(instance, "bot", text);
     this.emit("bot:chat", {
-      botId: instance.id,
-      username: instance.config.nick,
-      message: text,
-      type: "bot",
+      botId: instance.id, username: instance.config.nick, message: text, type: "bot",
     });
   }
 
@@ -395,11 +381,11 @@ class BotManager {
     }
   }
 
-  _buildContext(instance) {
+  _buildLegacyContext(instance) {
     const s = instance.stats;
     const inv = instance.bot?.inventory.items().slice(0, 8)
-      .map(i => i.name + "x" + i.count).join(", ") || "пусто";
-    return "HP=" + s.health + "/20 Еда=" + s.food + "/20 Позиция:X=" + s.x + " Y=" + s.y + " Z=" + s.z + " Инв:[" + inv + "]";
+      .map((i) => i.name + "x" + i.count).join(", ") || "пусто";
+    return "HP=" + s.health + "/20 Еда=" + s.food + "/20 X=" + s.x + " Y=" + s.y + " Z=" + s.z + " Инв:[" + inv + "]";
   }
 
   _addChat(instance, type, text) {
@@ -412,7 +398,7 @@ class BotManager {
     if (instance.reconnectTimer) clearTimeout(instance.reconnectTimer);
     instance.reconnectTimer = setTimeout(() => {
       log.info("Auto-reconnecting", instance.id);
-      this.connectBot(instance.id).catch(e => log.error("Reconnect failed:", e.message));
+      this.connectBot(instance.id).catch((e) => log.error("Reconnect failed:", e.message));
     }, instance.config.reconnectDelay || 5000);
   }
 
@@ -421,6 +407,7 @@ class BotManager {
     if (!instance) return;
     if (instance.reconnectTimer) { clearTimeout(instance.reconnectTimer); instance.reconnectTimer = null; }
     instance.config.autoReconnect = false;
+    instance.aiBrain?.stopAutonomous();
     if (instance.survivorAI?.isRunning) await instance.survivorAI.stop().catch(() => {});
     if (instance.taskManager) await instance.taskManager.stopAll().catch(() => {});
     if (instance.bot) { try { instance.bot.quit(); } catch {} instance.bot = null; }
@@ -458,12 +445,13 @@ class BotManager {
         mode: instance.config.aiMode || "local",
         apiKey: instance.config.apiKey,
         apiProvider: instance.config.apiProvider,
-        systemPrompt: RUSSIAN_OVERRIDE + (instance.config.systemPrompt || ""),
+        systemPrompt: RUSSIAN_OVERRIDE + (instance.config.systemPrompt || "Ты умный помощник по Minecraft. Отвечай по-русски."),
         messages: [{ role: "user", content: message }],
       });
       if (response?.content) {
-        this._addChat(instance, "ai", response.content);
-        this.emit("bot:aiMessage", { botId: instance.id, message: response.content });
+        const cleaned = stripThinkBlocks(response.content);
+        this._addChat(instance, "ai", cleaned);
+        this.emit("bot:aiMessage", { botId: instance.id, message: cleaned });
       }
     } catch (err) {
       this._addChat(instance, "system", "Ошибка ИИ: " + err.message);
@@ -473,6 +461,7 @@ class BotManager {
   stopAction(botId) {
     const instance = this.bots.get(botId);
     if (!instance) return;
+    instance.aiBrain?.stopAutonomous();
     instance.taskManager?.stopAll();
     instance.survivorAI?.stop();
     this._addChat(instance, "system", "Действие остановлено");
@@ -491,6 +480,8 @@ class BotManager {
     const instance = this.bots.get(botId);
     if (!instance?.bot) throw new Error("Бот не подключён");
     if (!instance.aiEnabled) throw new Error("ИИ отключён у этого бота");
+    // Останавливаем AIBrain чтобы не конфликтовал с SurvivorAI
+    instance.aiBrain?.stopAutonomous();
     instance.survivorAI = new SurvivorAI(instance, this.ollamaManager, this.emit);
     await instance.survivorAI.start();
     this.emit("bot:survivorStarted", { botId });
@@ -499,7 +490,14 @@ class BotManager {
 
   async stopSurvivorMode(botId) {
     const instance = this.bots.get(botId);
-    if (instance?.survivorAI) { await instance.survivorAI.stop().catch(() => {}); instance.survivorAI = null; }
+    if (instance?.survivorAI) {
+      await instance.survivorAI.stop().catch(() => {});
+      instance.survivorAI = null;
+    }
+    // Возобновляем AIBrain
+    if (instance?.aiBrain && instance?.aiEnabled) {
+      instance.aiBrain.startAutonomous(10000);
+    }
     this.emit("bot:survivorStopped", { botId });
     return { success: true };
   }
@@ -519,6 +517,12 @@ class BotManager {
     instance.aiEnabled = enabled;
     instance.config.aiEnabled = enabled;
     this.configManager.saveBotConfig(instance.config);
+    if (enabled && instance.bot && instance.status === "online" && !instance.aiBrain) {
+      instance.aiBrain = new AIBrain(instance, this.ollamaManager, instance.taskManager, this.emit);
+      instance.aiBrain.startAutonomous(10000);
+    } else if (!enabled && instance.aiBrain) {
+      instance.aiBrain.stopAutonomous();
+    }
     this.emit("bot:aiToggled", { botId, aiEnabled: enabled });
     return { success: true };
   }
@@ -544,7 +548,7 @@ class BotManager {
   }
 
   getAllBots() {
-    return Array.from(this.bots.values()).map(b => b.getPublicState());
+    return Array.from(this.bots.values()).map((b) => b.getPublicState());
   }
 
   async disconnectAll() {
