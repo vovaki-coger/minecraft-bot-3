@@ -117,6 +117,17 @@ function setupIpcHandlers() {
 
   ipcMain.handle("proxy:check", (_e, proxy) => botManager.testProxy(proxy));
 
+  ipcMain.handle("bot:startAnarchy", (_e, botId, opts) =>
+    botManager.startAnarchyProtocol(botId, opts)
+  );
+  ipcMain.handle("bot:stopAnarchy", (_e, botId) =>
+    botManager.stopAnarchyProtocol(botId)
+  );
+  ipcMain.handle("bot:getAnarchyState", (_e, botId) =>
+    botManager.getAnarchyState(botId)
+  );
+
+
   ipcMain.handle("dialog:openFile", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openFile"],
