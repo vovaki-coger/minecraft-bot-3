@@ -19,6 +19,7 @@ const { TaskManager, parseCommand } = require("./bot-tasks");
 const { parseAndy4Response, executeAndy4Command, isAndy4Model, stripThinkBlocks } = require("./andy4-parser");
 const { AgentLoop } = require("./agent-loop");
 const { AIBrain } = require("./ai-brain");
+const { AnarchyProtocol } = require("./anarchy-protocol");
 
 const RUSSIAN_OVERRIDE = `ВАЖНО: Ты общаешься НА РУССКОМ ЯЗЫКЕ. Все твои ответы должны быть на русском. `;
 
@@ -36,6 +37,7 @@ class BotInstance {
     this.taskManager = null;
     this.agentLoop = null;
     this.aiBrain = null;
+    this.anarchyProtocol = null;
     this.reconnectTimer = null;
     this._lastAIResponse = 0;
     this.stats = {
@@ -66,6 +68,7 @@ class BotInstance {
       stats: this.stats,
       chatHistory: this.chatHistory.slice(-100),
       survivorMode: this.survivorAI?.isRunning || false,
+      anarchyMode: this.anarchyProtocol?.isRunning || false,
     };
   }
 }
@@ -240,6 +243,7 @@ class BotManager {
       instance.agentLoop?.stop();
       instance.agentLoop = null;
       instance.aiBrain?.stopAutonomous();
+      instance.anarchyProtocol?.stop();
       this._addChat(instance, "system", "Кик: " + reason);
       this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
@@ -250,6 +254,7 @@ class BotManager {
       instance.agentLoop?.stop();
       instance.agentLoop = null;
       instance.aiBrain?.stopAutonomous();
+      instance.anarchyProtocol?.stop();
       this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
     });
@@ -421,6 +426,7 @@ class BotManager {
     if (instance.reconnectTimer) { clearTimeout(instance.reconnectTimer); instance.reconnectTimer = null; }
     instance.config.autoReconnect = false;
     instance.aiBrain?.stopAutonomous();
+    instance.anarchyProtocol?.stop();
     if (instance.survivorAI?.isRunning) await instance.survivorAI.stop().catch(() => {});
     if (instance.taskManager) await instance.taskManager.stopAll().catch(() => {});
     if (instance.bot) { try { instance.bot.quit(); } catch {} instance.bot = null; }
@@ -558,6 +564,43 @@ class BotManager {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  }
+
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ПРОТОКОЛ АНАРХИИ
+  // ══════════════════════════════════════════════════════════════════════
+
+  async startAnarchyProtocol(botId, opts) {
+    const instance = this.bots.get(botId);
+    if (!instance?.bot) throw new Error("Бот не подключён");
+    // Останавливаем конкурирующие режимы
+    instance.survivorAI?.stop();
+    instance.aiBrain?.stopAutonomous();
+    if (!instance.anarchyProtocol) {
+      instance.anarchyProtocol = new AnarchyProtocol(instance, this.ollamaManager, this.emit);
+    }
+    await instance.anarchyProtocol.start(opts);
+    return { success: true };
+  }
+
+  stopAnarchyProtocol(botId) {
+    const instance = this.bots.get(botId);
+    if (!instance) return { success: false };
+    instance.anarchyProtocol?.stop();
+    // Возобновляем AIBrain
+    if (instance.aiBrain && instance.aiEnabled) {
+      instance.aiBrain.startAutonomous(10000);
+    }
+    return { success: true };
+  }
+
+  getAnarchyState(botId) {
+    const instance = this.bots.get(botId);
+    if (!instance?.anarchyProtocol) {
+      return { isRunning: false, task: "", homeCommand: "/home", phase: "idle", cycleCount: 0, log: [] };
+    }
+    return instance.anarchyProtocol.getState();
   }
 
   getAllBots() {
