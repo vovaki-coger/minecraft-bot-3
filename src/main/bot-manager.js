@@ -156,6 +156,19 @@ class BotManager {
 
       // === ИНИЦИАЛИЗАЦИЯ AI BRAIN (v3) ===
       if (instance.aiEnabled) {
+        // Авто-определение Andy-4: если модель не задана или "auto" — выбираем лучшую
+        const configuredModel = instance.config.aiModel || "";
+        const needsAutoDetect = !configuredModel || configuredModel === "auto";
+        if (needsAutoDetect) {
+          this.ollamaManager.getPreferredModel().then(preferred => {
+            if (preferred) {
+              instance.config.aiModel = preferred;
+              log.info("[BotManager] Auto-selected model:", preferred);
+              this.emit("bot:modelDetected", { botId, model: preferred });
+            }
+          }).catch(() => {});
+        }
+
         instance.aiBrain = new AIBrain(
           instance,
           this.ollamaManager,
