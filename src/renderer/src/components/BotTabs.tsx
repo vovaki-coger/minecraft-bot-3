@@ -7,10 +7,11 @@ export default function BotTabs() {
   const [showCreate, setShowCreate] = useState(false);
 
   const tabs = [
-    { id: "bots", label: "Боты" },
-    { id: "models", label: "Модели ИИ" },
+    { id: "bots",        label: "Боты" },
+    { id: "models",      label: "Модели ИИ" },
+    { id: "anarchy",     label: "🏴‍☠️ Анархия" },
     { id: "coordinator", label: "Координатор" },
-    { id: "settings", label: "Настройки" },
+    { id: "settings",    label: "Настройки" },
   ] as const;
 
   return (
@@ -24,8 +25,12 @@ export default function BotTabs() {
           onClick={() => setActiveTab(tab.id)}
           className="px-4 py-1.5 text-xs font-mono whitespace-nowrap transition-colors"
           style={{
-            color: activeTab === tab.id ? "#7ecc49" : "#888",
-            borderBottom: activeTab === tab.id ? "2px solid #7ecc49" : "2px solid transparent",
+            color: activeTab === tab.id
+              ? (tab.id === "anarchy" ? "#e74c3c" : "#7ecc49")
+              : "#888",
+            borderBottom: activeTab === tab.id
+              ? `2px solid ${tab.id === "anarchy" ? "#e74c3c" : "#7ecc49"}`
+              : "2px solid transparent",
             background: "none",
             cursor: "pointer",
           }}
