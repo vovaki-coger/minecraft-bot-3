@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getAll: () => ipcRenderer.invoke("bot:getAll"),
     updateConfig: (id, config) => ipcRenderer.invoke("bot:updateConfig", id, config),
     testProxy: (proxy) => ipcRenderer.invoke("bot:testProxy", proxy),
+    // Anarchy Protocol
+    startAnarchy: (id, opts) => ipcRenderer.invoke("bot:startAnarchy", id, opts),
+    stopAnarchy: (id) => ipcRenderer.invoke("bot:stopAnarchy", id),
+    getAnarchyState: (id) => ipcRenderer.invoke("bot:getAnarchyState", id),
   },
   proxy: {
     check: (proxy) => ipcRenderer.invoke("proxy:check", proxy),
@@ -54,6 +58,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "bot:error", "bot:actionStopped", "bot:inventoryUpdated",
       "bot:survivorStarted", "bot:survivorStopped", "bot:survivorLog",
       "bot:aiToggled", "bot:windowOpen",
+      "bot:anarchyStarted", "bot:anarchyStopped", "bot:anarchyPhase", "bot:anarchyLog",
       "ollama:pullProgress",
       "coordinator:statusUpdate", "coordinator:taskAssigned", "coordinator:groupChat",
     ];
