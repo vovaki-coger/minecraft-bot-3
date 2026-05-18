@@ -1,7 +1,7 @@
 {
-  "name": "@workspace/minecraft-bot",
-  "version": "1.0.0",
-  "description": "Minecraft AI Bot - Electron Desktop Application",
+  "name": "@workspace/minecraft-bot-3",
+  "version": "3.0.0",
+  "description": "Minecraft AI Bot v3 - ReAct AI Brain with Mineflayer+Ollama bridge",
   "main": "src/main/index.js",
   "private": true,
   "scripts": {
@@ -65,7 +65,7 @@
   },
   "build": {
     "appId": "com.minecraftbot.app",
-    "productName": "Minecraft Bot",
+    "productName": "Minecraft Bot v3",
     "copyright": "Copyright © 2025",
     "asar": true,
     "directories": {
@@ -82,20 +82,44 @@
       {
         "from": "assets/",
         "to": "assets/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "assets/icon.ico"
     },
     "linux": {
-      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "assets/icon.png",
       "category": "Game"
     },
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "icon": "assets/icon.icns",
       "category": "public.app-category.games"
     },
