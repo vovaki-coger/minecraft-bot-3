@@ -9,6 +9,7 @@ const { SurvivorAI } = require("./survivor-ai");
 const { CaptchaHandler } = require("./captcha-handler");
 const { TaskManager, parseCommand } = require("./bot-tasks");
 const { parseAndy4Response, executeAndy4Command, isAndy4Model, stripThinkBlocks } = require("./andy4-parser");
+const { AgentLoop } = require("./agent-loop");
 
 // Системный промт, который добавляется ПЕРЕД промтом модели — форсирует русский
 const RUSSIAN_OVERRIDE = `ВАЖНО: Ты общаешься НА РУССКОМ ЯЗЫКЕ. Все твои ответы должны быть на русском. Никакого английского в тексте. `;
@@ -25,6 +26,7 @@ class BotInstance {
     this.survivorAI = null;
     this.captchaHandler = null;
     this.taskManager = null;
+    this.agentLoop = null;
     this.reconnectTimer = null;
     this._lastAIResponse = 0;
     this.stats = {
@@ -142,6 +144,7 @@ class BotManager {
       instance.status = "online";
       instance.captchaHandler = new CaptchaHandler(instance, this.ollamaManager);
       instance.taskManager = new TaskManager(instance, this.emit);
+      instance.agentLoop = new AgentLoop(instance, this.emit);
 
       const movements = new Movements(bot);
       movements.allowSprinting = true;
@@ -200,6 +203,8 @@ class BotManager {
 
     bot.on("kicked", (reason) => {
       instance.status = "offline";
+      instance.agentLoop?.stop();
+      instance.agentLoop = null;
       this._addChat(instance, "system", "Кик: " + reason);
       this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
@@ -207,6 +212,8 @@ class BotManager {
 
     bot.on("end", (reason) => {
       instance.status = "offline";
+      instance.agentLoop?.stop();
+      instance.agentLoop = null;
       this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
     });
