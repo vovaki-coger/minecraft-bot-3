@@ -8,7 +8,7 @@ const log = require("electron-log");
 const { SurvivorAI } = require("./survivor-ai");
 const { CaptchaHandler } = require("./captcha-handler");
 const { TaskManager, parseCommand } = require("./bot-tasks");
-const { parseAndy4Response, executeAndy4Command, isAndy4Model } = require("./andy4-parser");
+const { parseAndy4Response, executeAndy4Command, isAndy4Model, stripThinkBlocks } = require("./andy4-parser");
 
 // Системный промт, который добавляется ПЕРЕД промтом модели — форсирует русский
 const RUSSIAN_OVERRIDE = `ВАЖНО: Ты общаешься НА РУССКОМ ЯЗЫКЕ. Все твои ответы должны быть на русском. Никакого английского в тексте. `;
@@ -281,8 +281,9 @@ class BotManager {
       });
 
       if (!response?.content) return;
-      const rawText = response.content.trim();
-      log.info("[AI raw]", rawText.slice(0, 200));
+      // Срезаем <think>...</think> блоки у ЛЮБОЙ модели (deepseek-r1, qwen и др.)
+      const rawText = stripThinkBlocks(response.content.trim());
+      log.info("[AI raw (stripped)]", rawText.slice(0, 200));
 
       if (useAndy4) {
         await this._handleAndy4Response(instance, rawText, username);
