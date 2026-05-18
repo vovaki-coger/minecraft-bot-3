@@ -153,6 +153,26 @@ class OllamaManager {
     }
   }
 
+
+  /**
+   * Возвращает лучшую доступную модель для Minecraft.
+   * Приоритет: Andy-4 → другие andy-модели → первая установленная.
+   */
+  async getPreferredModel() {
+    try {
+      const response = await this._fetch(OLLAMA_API + '/api/tags');
+      const models = (response.models || []).map(m => m.name);
+      if (models.length === 0) return null;
+      const andy4 = models.find(m => m.includes('sweaterdog/andy-4') || m === 'andy-4');
+      if (andy4) return andy4;
+      const andy = models.find(m => m.toLowerCase().includes('andy'));
+      if (andy) return andy;
+      return models[0];
+    } catch {
+      return null;
+    }
+  }
+
   _formatBytes(bytes) {
     if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} ГБ`;
     if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} МБ`;
