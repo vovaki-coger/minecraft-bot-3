@@ -33,19 +33,26 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0
-          name: "Призмарин Бот v2.0.0"
+          tag_name: v3.0.0
+          name: "Prismarine Bot v3.0.0"
           body: |
-            ## Что нового в v2.0.0
-            - Добавлены модели **Andy-4** и **sweaterdog/andy-4:micro-q8_0** (лучшие для Minecraft)
-            - Выбор модели через **дропдаун со стрелкой** — видно все установленные ИИ
-            - Авто-детект всех локальных моделей Ollama
-            - Фильтр моделей: Все / Minecraft ИИ / Установленные
-            - Прогресс загрузки: **X.XX / Y.YY ГБ** с процентной полоской
-            - Тёмный экран при скачивании модели с полоской загрузки
-            - Бот пишет **по-русски** по умолчанию
-            - Дефолтная модель: `sweaterdog/andy-4:micro-q8_0`
-            - Улучшен экран загрузки с анимацией
+            ## Prismarine Bot v3.0.0
+            ### Что нового:
+            - **Нативная поддержка Andy-4** — бот думает в формате, на котором обучена модель
+            - **Авто-выбор Andy-4** при запуске если установлена
+            - **Улучшен инвентарь** — категории, тултип, полоска прочности, цветовая разметка
+            - **AIBrain (ReAct-петля)** — бот сам думает каждые 10 секунд
+            - **Память действий** — не повторяет ошибки
+            - Новый логотип: призмариновый кристалл 🔷
+
+            ### Установка:
+            - Windows: скачай **.exe** и запусти
+            - Linux: скачай **.AppImage**, дай права `chmod +x` и запусти
+            - macOS: скачай **.dmg** и перетащи в Applications
+
+            ### Требования:
+            - [Ollama](https://ollama.com) должна быть установлена
+            - Рекомендуемая модель: `sweaterdog/andy-4`
           files: dist-electron/*.exe
           draft: false
           prerelease: false
@@ -94,8 +101,8 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0
-          name: "Призмарин Бот v2.0.0"
+          tag_name: v3.0.0
+          name: "Prismarine Bot v3.0.0"
           files: dist-electron/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -131,8 +138,8 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.0
-          name: "Призмарин Бот v2.0.0"
+          tag_name: v3.0.0
+          name: "Prismarine Bot v3.0.0"
           files: dist-electron/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
